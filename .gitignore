@@ -1,0 +1,20 @@
+# build output / local binaries
+bin/
+dist/
+**/bin/
+**/dist/
+*.exe
+*.dll
+*.pdb
+*.ilk
+*.exp
+*.lib
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# logs / temp
+*.log
+*.tmp
