@@ -121,7 +121,7 @@ loop forever:
 | `water_only` | 水生植物被种到陆地 | 换到水面格子 |
 | `buster_needs_grave` | 墓碑吞噬者只能种墓碑上 | 找 `grid_items` 里 `type==1` 的格子 |
 | `not_on_belt` | 传送带关：带上没这张卡 | 从 `belt` 里挑现有的 |
-| `not_foreground` | （旧版）需要前台 | 新版不会出现 |
+| `not_foreground` | 旧版才返回；当前版本不会出现 | 忽略即可 |
 
 **规则**：收到 409 不要原样重试；按 reason 换策略。
 
@@ -244,4 +244,4 @@ while True:
 | `/plant` 一直 `cooldown` | 桥重启会清空本地冷却表，可能偏保守 |
 | 卡片一直不可用 + `paused: true` | 游戏失焦会暂停，冷却不推进 |
 | 传送带 `/plant` 404 | 从 `belt` 里挑，别写死卡名 |
-| 种植返回 409 但植物出现了 | 已修复的旧 bug；若复现请读 `raw_plants_at` 逻辑 |
+| 种植返回 409 但植物出现了 | 以 `/state.plants` 为准；连续不一致就重启桥 |
