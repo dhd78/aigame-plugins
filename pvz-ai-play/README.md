@@ -60,7 +60,7 @@ Full field reference and every `409 reason` (and what to do about it) are in [`A
 - **Read state**: `ReadProcessMemory` on the running `PlantsVsZombies.exe`. No injection, no overlay, no screenshot.
 - **Plant / shovel**: `pvztools` performs a remote call into the game process, so the game runs its own `AddPlant` / removal logic.
 - **Pick / start**: window messages (`WM_MOUSEMOVE` + button down/up), so the game does not need focus.
-- **Write-back**: the remote call does not charge sun or start cooldowns, so the bridge writes back a small amount of gameplay state — the board's sun value, seed-packet cooldown fields (so the card UI greys out correctly), and a few plant-initialisation fields after planting (for example the Sun-shroom's small form). It does not modify the executable (the optional patches are a separate step), does not read or write save files, and does not target any anti-cheat.
+- **Write-back**: the remote call does not charge sun or start cooldowns, so the bridge writes back a small amount of gameplay state — the board's sun value, seed-packet cooldown fields (so the card UI greys out correctly), and a few plant-initialisation fields after planting (for example the Sun-shroom's small form). It does not touch save files or the executable (patches are a separate, optional step).
 - The bridge only listens on `127.0.0.1`.
 
 Deeper notes on memory layout and the pitfalls behind these choices are in [`docs/DESIGN-NOTES.md`](docs/DESIGN-NOTES.md).
