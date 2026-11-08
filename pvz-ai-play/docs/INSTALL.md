@@ -15,7 +15,7 @@
 pip install pvztools
 ```
 
-如果 pip 报 SSL/OpenSSL 错误（本机遇到过），用离线方式：
+如果 pip 报 SSL/OpenSSL 错误，用离线方式：
 
 ```bash
 # 1) 从 PyPI 下载 wheel
