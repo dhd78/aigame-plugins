@@ -73,7 +73,8 @@ loop forever:
 
 ```json
 {
-  "ok": true, "in_level": true, "ui": "关卡中", "paused": false,
+  "ok": true, "pid": 12345, "version": "1_0_0_1051_en",
+  "in_level": true, "ui": "关卡中", "paused": false,
   "sun": 175, "wave": 8,
   "scene": 0, "is_pool": false, "conveyor": false,
 
@@ -96,6 +97,9 @@ loop forever:
 ```
 
 **可用性判断**：普通关看 `seeds[i].usable`；传送带关看 `belt`（`seeds[i].usable` 只表示"带上有"）。
+
+- `version`：**pvztools 的 profile id**（`1_0_0_1051_en`），不是游戏内字段，别用它判断版本；
+- `pid`：游戏进程 id（桥重挂后会变）
 
 **场景码 `scene`**：`0` 白天 / `1` 夜晚 / `2` 池塘 / `3` 浓雾 / `4` 屋顶。
 池塘和浓雾：第 2、3 行是水（6 行棋盘）。
