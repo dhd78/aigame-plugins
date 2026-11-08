@@ -15,6 +15,23 @@ dist/
 *.user
 *.suo
 
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+vendor/
+pvztools/
+
+# game files that must never be committed
+*.xp3
+*.xp3.xp3
+*.moc3
+PlantsVsZombies.exe
+*.pak
+*.reanim
+
 # logs / temp
 *.log
 *.tmp
