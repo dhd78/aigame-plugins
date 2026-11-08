@@ -18,7 +18,6 @@ that dependency stays under its own license.
 
 ## Game
 
-This repository contains **no** Plants vs. Zombies game files: no
-`PlantsVsZombies.exe`, no `.pak`/`.reanim`/image/audio assets, no save data.
+No game files are included: no `PlantsVsZombies.exe`, no assets, no save data.
 `docs/PATCHES.md` describes two optional byte patches for a specific retail
-build; it does not ship the executable or any patch binary.
+build; it ships no binary.
