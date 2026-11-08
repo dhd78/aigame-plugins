@@ -62,8 +62,10 @@ Get-FileHash PlantsVsZombies.exe -Algorithm SHA256
 
 | State | SHA-256 |
 | --- | --- |
-| Original, unpatched 1.0.0.1051 retail | `678016E417CD55F1F19D7EABB6F2B7E6B87146BE107DB1179A61985078004F7A` |
+| Original, unpatched 1.0.0.1051 retail (3,007,800 bytes) | `678016E417CD55F1F19D7EABB6F2B7E6B87146BE107DB1179A61985078004F7A` |
 | Patched build used for verification | `8DC06FE8E243D8CEF35FBF0D60F6FC1504F1FB549ABD0CC9359C5B76F1110246` |
+
+Both hashes were checked against the actual files; the two builds differ in exactly the three patched bytes.
 
 ## Restore
 
