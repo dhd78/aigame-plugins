@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.2 — 2026-11-10
+
+- 挖矿 DLC 适配：`/state` 增加 `dlc`、`maxUncoveredDepth`。
+- `/grid?depth=N` 支持地下地块读取（`present`、`ground`、`hardness`、`stability`）。
+- `/tech` 增加 `dlc`、`installed` 字段。
+- 调试接口 `/set_ground` 支持 `depth`。
+- 客户端 `grid --depth`。
+- 版本号同步到 `0.1.2`。
+
 ## 0.1.1 — 2026-11-10
 
 - 调试写接口默认关闭；设置 `FARMERBRIDGE_DEBUG=1` 后才启用 `/add_item`、`/set_drone`、`/set_ground`、`/set_entity`。
