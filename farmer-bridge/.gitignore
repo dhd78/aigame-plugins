@@ -1,0 +1,8 @@
+dist/
+build.rsp
+*.user
+.vs/
+bin/
+obj/
+__pycache__/
+*.pyc
