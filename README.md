@@ -8,6 +8,7 @@ Bridges and tools that let AI agents read and act inside single-player games. Ea
 | --- | --- | --- |
 | [`pvz-ai-play`](pvz-ai-play/) | Plants vs. Zombies (PvZ1) 1.0.0.1051 | Local HTTP bridge: reads the board, plants/shovels, picks seeds and starts a level. No vision, no OCR, no mouse control |
 | [`千恋万花读取文本插件`](千恋万花读取文本插件/) | Senren * Banka | Read-only text bridge: injects into the x86 game process, reads the current KAG history line, exposes it on `127.0.0.1:15528` |
+| [`farmer-bridge`](farmer-bridge/) | The Farmer Was Replaced | BepInEx plugin: exposes farm state and code execution over a loopback HTTP JSON API (`127.0.0.1:15800`); ships a stdlib-only Python client |
 
 Each plugin's README states the exact game build it was verified against and how to check your own copy.
 
@@ -24,6 +25,16 @@ ai-game-plugins/
     scripts/         smoke test
     LICENSE          MIT (14-软件开发师·续灯 and dhd)
     THIRD_PARTY_NOTICES.md
+
+  farmer-bridge/
+    FarmerBridge.cs     BepInEx plugin (memory read/write, HTTP server)
+    farmer_client.py    stdlib-only Python client
+    build.ps1           csc build against the game + BepInEx assemblies
+    examples/
+    LICENSE             MIT (dhd)
+    NOTICE.txt
+    CHANGELOG.md
+    AI-DISCLOSURE.md
 
   千恋万花读取文本插件/
     src/             bridge + injector source
