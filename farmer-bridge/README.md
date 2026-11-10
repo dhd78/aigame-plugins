@@ -7,7 +7,7 @@
 
 不依赖截图、虚拟鼠标或键盘事件。
 
-> 当前版本：`0.1.1`
+> 当前版本：`0.1.2`
 >
 > 测试环境：Unity `6000.0.43.9905963` + Mono x64 + BepInEx `5.4.23.6`
 
@@ -84,6 +84,7 @@ python farmer_client.py stop
 GET /health
 GET /state
 GET /grid?x=0&y=0&w=8&h=8
+GET /grid?x=0&y=0&w=8&h=8&depth=16   # 地下层
 GET /drones
 GET /items
 GET /unlocks
@@ -140,6 +141,38 @@ POST /buy    {"name":"loops"}
 POST /save
 POST /load
 ```
+
+## 挖矿 DLC
+
+`/state` 的 `farm` 字段会返回：
+
+```text
+dlc                 已启用的 DLC 名称（如 `Mining`；未启用时为空串）
+maxUncoveredDepth    当前已挖到的最深深度
+```
+
+地下层读取：
+
+```text
+GET /grid?x=0&y=0&w=8&h=8&depth=16
+```
+
+返回每个位置的 `present`、`ground`、`hardness`、`stability`。
+地表查询不传 `depth` 时保持旧格式。
+
+`/tech` 现在也有：
+
+```json
+{"dlc": "Mining", "installed": true}
+```
+
+调试写地表/地下：
+
+```text
+POST /set_ground {"x":0,"y":0,"depth":16,"ground":"coal"}
+```
+
+需要 `FARMERBRIDGE_DEBUG=1`。
 
 ## 实现
 
@@ -241,6 +274,8 @@ A local memory bridge for *The Farmer Was Replaced*: a BepInEx plugin exposes th
 GET  /health  /state  /grid  /drones  /items  /unlocks  /tech  /doc  /files  /execution  /output
 POST /file  /code  /run  /stop  /step  /buy  /save  /load
 ```
+
+**Mining DLC** (optional): `/state` reports `farm.dlc` and `farm.maxUncoveredDepth`; `/grid` accepts `depth=N` for underground tiles (returns `present`, `ground`, `hardness`, `stability`); `/tech` reports `dlc` and `installed`.
 
 **Client**: `python farmer_client.py state` — no third-party Python packages.
 
