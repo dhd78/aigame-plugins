@@ -61,6 +61,7 @@ def main():
     p.add_argument("--y", type=int, default=0)
     p.add_argument("--w", type=int, default=8)
     p.add_argument("--h", type=int, default=8)
+    p.add_argument("--depth", type=int, default=-1)
 
     sub.add_parser("files")
 
@@ -109,7 +110,7 @@ def main():
     elif args.cmd == "file":
         result = api("/file", "POST", {"name": args.name})
     elif args.cmd == "grid":
-        result = api(f"/grid?x={args.x}&y={args.y}&w={args.w}&h={args.h}")
+        result = api(f"/grid?x={args.x}&y={args.y}&w={args.w}&h={args.h}&depth={args.depth}")
     elif args.cmd == "doc":
         result = api("/doc?page=" + urllib.parse.quote(args.page, safe=""))
     elif args.cmd == "tech":
