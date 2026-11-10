@@ -12,7 +12,7 @@ using UnityEngine;
 
 namespace FarmerBridge
 {
-    [BepInPlugin("local.farmerbridge", "Farmer Bridge", "0.1.1")]
+    [BepInPlugin("local.farmerbridge", "Farmer Bridge", "0.1.2")]
     public class FarmerBridgePlugin : BaseUnityPlugin
     {
         private const int Port = 15800;
@@ -163,7 +163,7 @@ namespace FarmerBridge
         private string Route(string path, string body)
         {
             if (path.StartsWith("/health", StringComparison.Ordinal))
-                return "{\"ok\":true,\"bridge\":\"farmer-bridge\",\"version\":\"0.1.1\",\"port\":" + Port + "}";
+                return "{\"ok\":true,\"bridge\":\"farmer-bridge\",\"version\":\"0.1.2\",\"port\":" + Port + "}";
             if (path.StartsWith("/state", StringComparison.Ordinal))
                 return OnMain(StateJson);
             if (path.StartsWith("/grid", StringComparison.Ordinal))
@@ -482,10 +482,15 @@ namespace FarmerBridge
             if (string.IsNullOrEmpty(name)) return "{\"ok\":false,\"error\":\"missing-ground\"}";
             int x = IntField(body, "x", 0);
             int y = IntField(body, "y", 0);
+            int depth = IntField(body, "depth", -1);
             if (x < 0 || y < 0 || x >= grid.WorldSize.x || y >= grid.WorldSize.y)
                 return "{\"ok\":false,\"error\":\"out-of-world\"}";
-            grid.SetGround(new Vector2Int(x, y), name);
-            return "{\"ok\":true,\"ground\":\"" + Json(name) + "\",\"x\":" + x + ",\"y\":" + y + "}";
+            if (depth >= 0)
+                grid.SetGround(new Vector3Int(x, y, depth), name);
+            else
+                grid.SetGround(new Vector2Int(x, y), name);
+            return "{\"ok\":true,\"ground\":\"" + Json(name) + "\",\"x\":" + x + ",\"y\":" + y +
+                   (depth >= 0 ? ",\"depth\":" + depth : "") + "}";
         }
 
         private static string SetEntity(string body)
@@ -568,9 +573,16 @@ namespace FarmerBridge
         {
             var sb = new StringBuilder();
             sb.Append("{\"mainDroneId\":" + farm.mainDroneId);
+            var dlc = farm.installedDlcs.ToString();
+            if (dlc == "Minig") dlc = "Mining";
+            else dlc = dlc.Replace("Minig", "Mining");
+            sb.Append(",\"dlc\":\"" + Json(dlc) + "\"");
             var grid = farm.grid;
             if (grid != null)
+            {
                 sb.Append(",\"world\":[" + grid.WorldSize.x + "," + grid.WorldSize.y + "]");
+                sb.Append(",\"maxUncoveredDepth\":" + grid.maxUncoveredDepth);
+            }
             sb.Append("}");
             return sb.ToString();
         }
@@ -680,6 +692,11 @@ namespace FarmerBridge
                 sb.Append(",\"nextCost\":");
                 var farm = CurrentFarm();
                 AppendCost(sb, farm == null ? null : farm.GetUnlockCost(unlock, level));
+                bool installed = true;
+                try { installed = farm == null || farm.IsDlcInstalled(unlock.dlc); }
+                catch { installed = true; }
+                sb.Append(",\"dlc\":\"" + Json(unlock.dlc.ToString()) + "\"");
+                sb.Append(",\"installed\":" + (installed ? "true" : "false"));
                 sb.Append("}");
             }
             sb.Append("]}");
@@ -814,7 +831,7 @@ namespace FarmerBridge
             var grid = farm == null ? null : farm.grid;
             if (grid == null) return "{\"ok\":false,\"error\":\"no-farm-grid\"}";
 
-            int x = 0, y = 0, w = 8, h = 8;
+            int x = 0, y = 0, w = 8, h = 8, depth = -1;
             var query = path.IndexOf('?') >= 0 ? path.Substring(path.IndexOf('?') + 1) : "";
             foreach (var part in query.Split('&'))
             {
@@ -826,25 +843,47 @@ namespace FarmerBridge
                 if (kv[0] == "y") y = v;
                 if (kv[0] == "w") w = Mathf.Clamp(v, 1, 32);
                 if (kv[0] == "h") h = Mathf.Clamp(v, 1, 32);
+                if (kv[0] == "depth" || kv[0] == "z") depth = Mathf.Max(0, v);
             }
 
             var size = grid.WorldSize;
             var maxX = Mathf.Min(size.x, x + w);
             var maxY = Mathf.Min(size.y, y + h);
             var sb = new StringBuilder();
-            sb.Append("{\"ok\":true,\"world\":[" + size.x + "," + size.y + "],\"cells\":[");
+            sb.Append("{\"ok\":true,\"world\":[" + size.x + "," + size.y + "]");
+            sb.Append(",\"maxUncoveredDepth\":" + grid.maxUncoveredDepth);
+            if (depth >= 0) sb.Append(",\"depth\":" + depth);
+            sb.Append(",\"cells\":[");
             bool first = true;
             for (int cy = Mathf.Max(0, y); cy < maxY; cy++)
             {
                 for (int cx = Mathf.Max(0, x); cx < maxX; cx++)
                 {
-                    var cell = grid.cells[cy * size.x + cx];
                     if (!first) sb.Append(",");
                     first = false;
-                    sb.Append("{\"x\":" + cx + ",\"y\":" + cy + ",\"z\":" + cell.depth +
-                              ",\"entity\":\"" + Json(cell.entity == null ? "" : cell.entity.GetType().Name) + "\"" +
-                              ",\"water\":" + cell.waterVolume.ToString("0.###") +
-                              ",\"cactus\":" + cell.cactusNumber + "}");
+                    if (depth < 0)
+                    {
+                        var cell = grid.cells[cy * size.x + cx];
+                        sb.Append("{\"x\":" + cx + ",\"y\":" + cy + ",\"z\":" + cell.depth +
+                                  ",\"entity\":\"" + Json(cell.entity == null ? "" : cell.entity.GetType().Name) + "\"" +
+                                  ",\"water\":" + cell.waterVolume.ToString("0.###") +
+                                  ",\"cactus\":" + cell.cactusNumber + "}");
+                    }
+                    else
+                    {
+                        GroundData.Ground ground;
+                        bool present = grid.TryGetExistingGroundAt(new Vector3Int(cx, cy, depth), out ground);
+                        sb.Append("{\"x\":" + cx + ",\"y\":" + cy + ",\"z\":" + depth +
+                                  ",\"present\":" + (present ? "true" : "false"));
+                        if (present)
+                        {
+                            string groundName = ground.groundSo == null ? "" : ground.groundSo.objectName;
+                            sb.Append(",\"ground\":\"" + Json(groundName) + "\"");
+                            sb.Append(",\"hardness\":" + ground.hardness);
+                            sb.Append(",\"stability\":" + ground.stability);
+                        }
+                        sb.Append("}");
+                    }
                 }
             }
             sb.Append("]}");
