@@ -1,0 +1,6 @@
+FarmerBridge 0.1.0
+
+Independent local integration for The Farmer Was Replaced.
+No game files, game assets, saves, or BepInEx binaries are included.
+BepInEx is a separate project: https://github.com/BepInEx/BepInEx
+The bridge listens on 127.0.0.1 only and has no authentication; do not expose it to a public network.
