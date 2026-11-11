@@ -45,7 +45,8 @@
 
 - 其他 Windows 版本 / 其他游戏版本；
 - 写接口 `/code`、`/run`、`/buy`、`/save` 的实机行为（本次未调用）；
-- Claude Code / Cursor 真实 agent 加载（仅目录约定检查）；
+- Cursor 3.29.9：**真实 agent 加载 PASS**（2026-11-11，技能放入 `~/.cursor/skills/`，读取 `/health` 与 `/grid` 并返回真实作物）；
+- Claude Code：**未测**（无 Anthropic 账号，今后不再安排）；
 - v0.1.1 协助安装的**真实 GitHub 下载**（测试用本地同版本 Release 资产模拟；逻辑与实际资产一致）。
 
 调试写接口默认关闭（`FARMERBRIDGE_DEBUG=1` 才开），本技能不使用、不介绍。
