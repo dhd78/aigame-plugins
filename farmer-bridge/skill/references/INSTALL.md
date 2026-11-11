@@ -29,6 +29,8 @@
 
 ## 安装 FarmerBridge
 
+> 若你同意由 agent 代为安装，见 `SKILL.md` 的「桥没装时（协助安装）」；否则按下面的手动步骤。
+
 1. 把 `FarmerBridge.dll` 复制到：
    ```text
    <游戏目录>\BepInEx\plugins\FarmerBridge.dll
