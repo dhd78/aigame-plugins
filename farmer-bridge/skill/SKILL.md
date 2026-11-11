@@ -34,6 +34,40 @@ GET http://127.0.0.1:15800/health
 | 游戏已开、`/health` 仍不通 | DLL 没装 / BepInEx 没装 / 放错目录 | 按 `references/INSTALL.md` 重装；看 `<游戏目录>\BepInEx\LogOutput.log` 是否有 `FarmerBridge listening on 127.0.0.1:15800` |
 | `/health` 通、`/state` 500 | 还在主菜单 / 没进存档 | 进存档后再试；必要时 `POST /start` 加载存档 |
 
+## 桥没装时（协助安装）
+
+前提：游戏已装、BepInEx 5.4.23.6 x64 已装，但 `GET /health` 不通，且
+`<游戏目录>\BepInEx\LogOutput.log` 里没有 `FarmerBridge listening`。
+
+**先问用户，得到明确同意再动手。** 未经同意只给链接，不下载、不写文件。
+
+同意后：
+
+1. 取最新 Release 的资产清单：
+
+   ```text
+   GET https://api.github.com/repos/dhd78/aigame-plugins/releases/latest
+   ```
+
+   找到 `farmer-bridge-v*.zip` 与同一 Release 的 `SHA256SUMS.txt`。
+
+2. 下载这两个文件到临时目录，用 `SHA256SUMS.txt` 校验 zip；**哈希不符立即停止并报告**。
+
+3. 只从 zip 中取出 `FarmerBridge.dll`，复制到：
+
+   ```text
+   <游戏目录>\BepInEx\plugins\FarmerBridge.dll
+   ```
+
+   不要解压其他文件，不要运行 `build.ps1`，不要改游戏目录里的其他内容。
+
+4. 让用户重启游戏并进入存档；再查 `GET /health`，期望
+   `{"ok":true,"bridge":"farmer-bridge","version":"0.1.3+"}`。
+
+5. 如果用户拒绝：只打印 Release 页地址，让用户自己下载安装，然后继续等 `/health` 通。
+
+**不要自动下载 BepInEx 或游戏本体**；它们由用户自行安装。
+
 ## 环境
 
 | 项 | 要求 |
@@ -157,6 +191,15 @@ print(api("/output"))
 `farmer-bridge` is a Windows-only skill for *The Farmer Was Replaced*. A BepInEx 5.4.23.6 plugin (`FarmerBridge.dll`, installed by the user) exposes the game's farm state over a loopback JSON API at `127.0.0.1:15800`; this skill teaches an agent how to verify the bridge, read state/grid/tech, write code to a file page, run it, and read output. It does not bundle the DLL, BepInEx, game files or saves, and does not start the game.
 
 Triggers: read farm state, automate The Farmer Was Replaced, run game code, send a drone, inspect tech tree.
+
+### Assisted install (opt-in)
+
+If the bridge is missing and the user explicitly agrees, the skill may download
+the latest `farmer-bridge-v*.zip` plus `SHA256SUMS.txt` from
+`https://github.com/dhd78/aigame-plugins/releases`, verify the hash, extract
+**only** `FarmerBridge.dll` into `<game>\BepInEx\plugins\`, and ask the user to
+restart the game. Without consent it only prints the release URL. It never
+downloads BepInEx or the game.
 
 **Loopback only, no authentication.** Do not expose the port. `/code`, `/run`, `/buy` and `/save` change game state or the save; confirm with the user first. Debug write endpoints are off unless `FARMERBRIDGE_DEBUG=1`; this skill does not use or document them.
 
