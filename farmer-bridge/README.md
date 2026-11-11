@@ -7,7 +7,7 @@
 
 不依赖截图、虚拟鼠标或键盘事件。
 
-> 当前版本：`0.1.2`
+> 当前版本：`0.1.4`
 >
 > 测试环境：Unity `6000.0.43.9905963` + Mono x64 + BepInEx `5.4.23.6`
 
@@ -103,6 +103,25 @@ POST /file   {"name":"maze"}
 
 文件不存在时自动创建。文件名限制为字母、数字、`_`、`-`，最多 32 字符。
 
+### 地表实体字段
+
+`/grid` 不传 `depth` 时，每个单元除原有字段外还返回：
+
+```json
+{
+  "entity": "Growable",
+  "name": "grass",
+  "grown": true,
+  "growPct": 1,
+  "companion": {"name": "bush", "x": 14, "y": 15}
+}
+```
+
+- `name`：`Entity.objectSO.objectName`；
+- `grown` / `growPct`：仅 `Growable`，百分比为 0–1；
+- `companion`：仅存在 companion 时返回，坐标为绝对坐标；
+- 原 `entity` 字段保持不变，旧客户端不受影响。
+
 ### 代码
 
 ```text
@@ -140,6 +159,7 @@ POST /buy    {"name":"loops"}
 ```text
 POST /save
 POST /load
+POST /start  {"save":"BridgeTest"}   # 加载并进入游戏
 ```
 
 ## 挖矿 DLC
@@ -147,7 +167,7 @@ POST /load
 `/state` 的 `farm` 字段会返回：
 
 ```text
-dlc                 已启用的 DLC 名称（如 `Mining`；未启用时为空串）
+dlc                 已安装的 DLC 掩码
 maxUncoveredDepth    当前已挖到的最深深度
 ```
 
@@ -272,10 +292,14 @@ A local memory bridge for *The Farmer Was Replaced*: a BepInEx plugin exposes th
 
 ```text
 GET  /health  /state  /grid  /drones  /items  /unlocks  /tech  /doc  /files  /execution  /output
-POST /file  /code  /run  /stop  /step  /buy  /save  /load
+POST /file  /code  /run  /stop  /step  /buy  /save  /load  /start
 ```
 
-**Mining DLC** (optional): `/state` reports `farm.dlc` and `farm.maxUncoveredDepth`; `/grid` accepts `depth=N` for underground tiles (returns `present`, `ground`, `hardness`, `stability`); `/tech` reports `dlc` and `installed`.
+**Mining DLC** (optional): `/state` reports `farm.dlc` and `farm.maxUncoveredDepth`; `/grid` accepts `depth=N` for underground tiles (`present`, `ground`, `hardness`, `stability`); `/tech` reports `dlc` and `installed`.
+
+**Grid details** (v0.1.4): surface cells also carry `name`, `grown`, `growPct` and `companion` (`{name,x,y}`). The original `entity` field is unchanged, so older clients keep working.
+
+**Start a save**: `POST /start {"save":"<name>"}` loads the save and enters the game; omit `save` to use the current one. Save names may contain Chinese characters.
 
 **Client**: `python farmer_client.py state` — no third-party Python packages.
 
