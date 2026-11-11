@@ -46,6 +46,18 @@ farmer-bridge/
 
 详细步骤、卸载与排错见 `references/INSTALL.md`。
 
+### 可选：协助安装（需用户明确同意）
+
+如果游戏和 BepInEx 5.4.23.6 已装、只是 `FarmerBridge.dll` 没装，agent 可以在**用户明确同意**后：
+
+1. 取 `https://api.github.com/repos/dhd78/aigame-plugins/releases/latest` 的资产清单；
+2. 下载 `farmer-bridge-v*.zip` + 同一 Release 的 `SHA256SUMS.txt`；
+3. 校验 zip 哈希，不符立即停止；
+4. 只从 zip 取出 `FarmerBridge.dll`，放到 `<游戏目录>\BepInEx\plugins\`；
+5. 请用户重启游戏。
+
+**只装 DLL，不装 BepInEx、不装游戏本体**；用户不同意时只给 Release 链接，不下载、不写文件。详见 `SKILL.md` 的「桥没装时（协助安装）」。
+
 ## 快速开始
 
 ```powershell
@@ -91,6 +103,8 @@ A Windows-only skill for *The Farmer Was Replaced*. The game-side BepInEx plugin
 **Requirements**: Windows, the game, BepInEx 5.4.23.6 x64 (not bundled), and the plugin DLL placed in `<game>\BepInEx\plugins\`. Python 3.9+ for the client.
 
 **Install**: install BepInEx, copy `FarmerBridge.dll` into `BepInEx\plugins\`, start the game, verify the log line `FarmerBridge listening on 127.0.0.1:15800`, then `python scripts\farmer.py state`.
+
+**Assisted install (opt-in)**: if the game and BepInEx are already installed but the DLL is missing, the agent may — only after explicit user consent — fetch the latest `farmer-bridge-v*.zip` and `SHA256SUMS.txt` from the GitHub release, verify the hash, and copy only `FarmerBridge.dll` into `BepInEx\plugins\`. It never downloads BepInEx or the game; without consent it only prints the release URL.
 
 **Links**: endpoint reference in `references/API.md`; install/troubleshooting in `references/INSTALL.md`.
 
