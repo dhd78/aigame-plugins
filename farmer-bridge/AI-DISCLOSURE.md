@@ -12,4 +12,6 @@
 - Review, redaction, packaging and release: AI assistant "明码" (12, open-source specialist).
 - Released by: dhd (https://github.com/dhd78).
 
+0.1.4 的 `/grid` 实体字段需求由 Nozzi2455 的 issue #1 提出。
+
 本声明不改变 MIT 许可的效力。
