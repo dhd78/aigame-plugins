@@ -12,7 +12,7 @@ using UnityEngine;
 
 namespace FarmerBridge
 {
-    [BepInPlugin("local.farmerbridge", "Farmer Bridge", "0.1.2")]
+    [BepInPlugin("local.farmerbridge", "Farmer Bridge", "0.1.4")]
     public class FarmerBridgePlugin : BaseUnityPlugin
     {
         private const int Port = 15800;
@@ -163,7 +163,7 @@ namespace FarmerBridge
         private string Route(string path, string body)
         {
             if (path.StartsWith("/health", StringComparison.Ordinal))
-                return "{\"ok\":true,\"bridge\":\"farmer-bridge\",\"version\":\"0.1.2\",\"port\":" + Port + "}";
+                return "{\"ok\":true,\"bridge\":\"farmer-bridge\",\"version\":\"0.1.4\",\"port\":" + Port + "}";
             if (path.StartsWith("/state", StringComparison.Ordinal))
                 return OnMain(StateJson);
             if (path.StartsWith("/grid", StringComparison.Ordinal))
@@ -192,6 +192,8 @@ namespace FarmerBridge
                 return OnMain(SaveGame);
             if (path.StartsWith("/load", StringComparison.Ordinal))
                 return OnMain(LoadGame);
+            if (path.StartsWith("/start", StringComparison.Ordinal))
+                return OnMain(() => StartGame(body));
             // DebugEndpointGuard: write-debug routes are opt-in.
             if (!DebugEnabled && (path.StartsWith("/add_item", StringComparison.Ordinal)
                 || path.StartsWith("/set_drone", StringComparison.Ordinal)
@@ -419,6 +421,16 @@ namespace FarmerBridge
                     else if (n == 't') sb.Append('\t');
                     else if (n == '"') sb.Append('"');
                     else if (n == '\\') sb.Append('\\');
+                    else if (n == 'u' && i + 4 < body.Length)
+                    {
+                        int code;
+                        if (int.TryParse(body.Substring(i + 1, 4),
+                                System.Globalization.NumberStyles.HexNumber, null, out code))
+                        {
+                            sb.Append((char)code);
+                            i += 4;
+                        }
+                    }
                     else sb.Append(n);
                 }
                 else sb.Append(c);
@@ -825,6 +837,42 @@ namespace FarmerBridge
             }
         }
 
+        private static string StartGame(string body)
+        {
+            var main = MainInstance();
+            if (main == null) return "{\"ok\":false,\"error\":\"no-main-sim\"}";
+            Menu menu = null;
+            var menus = Resources.FindObjectsOfTypeAll<Menu>();
+            for (int i = 0; i < menus.Length; i++)
+            {
+                if (menus[i] != null) { menu = menus[i]; break; }
+            }
+            if (menu == null) return "{\"ok\":false,\"error\":\"no-menu\"}";
+
+            var save = StringField(body, "save");
+            try
+            {
+                main.StopMainExecution();
+                if (!string.IsNullOrEmpty(save))
+                {
+                    // Existing saves may contain non-ASCII names (for example Chinese).
+                    // Reject path separators/traversal, but do not use IsValidSaveName here.
+                    if (save.IndexOfAny(new[] { '/', '\\' }) >= 0 || save == "." || save == ".." ||
+                        !Directory.Exists(Saver.GetPathOfSaveDirectory(save)))
+                        return "{\"ok\":false,\"error\":\"save-not-found\"}";
+                    menu.LoadSave(save);
+                    Saver.Load(main);
+                }
+                menu.Play();
+                return "{\"ok\":true,\"started\":true,\"save\":\"" +
+                       Json(string.IsNullOrEmpty(save) ? "active" : save) + "\"}";
+            }
+            catch (Exception ex)
+            {
+                return "{\"ok\":false,\"error\":\"" + Json(ex.GetType().Name + ": " + ex.Message) + "\"}";
+            }
+        }
+
         private static string GridJson(string path)
         {
             var farm = CurrentFarm();
@@ -867,7 +915,9 @@ namespace FarmerBridge
                         sb.Append("{\"x\":" + cx + ",\"y\":" + cy + ",\"z\":" + cell.depth +
                                   ",\"entity\":\"" + Json(cell.entity == null ? "" : cell.entity.GetType().Name) + "\"" +
                                   ",\"water\":" + cell.waterVolume.ToString("0.###") +
-                                  ",\"cactus\":" + cell.cactusNumber + "}");
+                                  ",\"cactus\":" + cell.cactusNumber);
+                        AppendEntityDetail(sb, cell.entity);
+                        sb.Append("}");
                     }
                     else
                     {
@@ -888,6 +938,28 @@ namespace FarmerBridge
             }
             sb.Append("]}");
             return sb.ToString();
+        }
+
+        private static void AppendEntityDetail(StringBuilder sb, Entity entity)
+        {
+            if (entity == null) return;
+            var so = entity.objectSO;
+            sb.Append(",\"name\":\"" + Json(so == null ? "" : so.objectName) + "\"");
+            var growable = entity as Growable;
+            if (growable == null) return;
+            sb.Append(",\"grown\":" + (growable.Harvestable ? "true" : "false"));
+            var pct = growable.GrownPercent;
+            if (pct < 0) pct = 0;
+            if (pct > 1) pct = 1;
+            sb.Append(",\"growPct\":" + pct.ToString("0.###"));
+            var companionType = InstanceField(growable, "companionType") as EntitySO;
+            var companionPosObj = InstanceField(growable, "companionPos");
+            if (companionType != null && companionPosObj is Vector2Int)
+            {
+                var pos = (Vector2Int)companionPosObj;
+                sb.Append(",\"companion\":{\"name\":\"" + Json(companionType.objectName) + "\",\"x\":" +
+                          pos.x + ",\"y\":" + pos.y + "}");
+            }
         }
 
         private static string Json(string value)
