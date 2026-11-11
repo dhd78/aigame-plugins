@@ -10,7 +10,7 @@
 
 v0.1.1 起，技能可在**用户明确同意**后，从 `dhd78/aigame-plugins` 的 GitHub Release 下载插件 zip 与 `SHA256SUMS.txt`，校验哈希后**只取** `FarmerBridge.dll`；不同意时只打印 Release 地址，不下载、不写文件。技能不自动下载 BepInEx 或游戏本体。
 
-测试：2026-11-10 在 Windows 11、游戏已安装、插件 0.1.3 运行的情况下，验证 `/health`、`/state`、`/grid`、`/tech`、`/files` 与客户端；**未调用** `/code`、`/run`、`/buy`、`/save` 等写接口。2026-11-11 用本地同版本 Release 资产模拟协助安装：同意 / 拒绝 / 哈希不符三条路径均通过。
+测试：2026-11-10 在 Windows 11、游戏已安装、插件 0.1.3 运行的情况下，验证 `/health`、`/state`、`/grid`、`/tech`、`/files` 与客户端；**未调用** `/code`、`/run`、`/buy`、`/save` 等写接口。2026-11-11 用本地同版本 Release 资产模拟协助安装：同意 / 拒绝 / 哈希不符三条路径均通过。同日 Cursor 3.29.9 真实 agent 加载 PASS（读取 /health 与 /grid）；Claude Code 未测，无 Anthropic 账号，今后不再安排。
 
 本声明不改变 MIT 许可的效力。
 
@@ -24,6 +24,6 @@ This skill package does **not** bundle `FarmerBridge.dll`, BepInEx, the game, sa
 
 Since v0.1.1, with **explicit user consent**, the skill may download the plugin zip and `SHA256SUMS.txt` from the `dhd78/aigame-plugins` GitHub release, verify the hash, and copy **only** `FarmerBridge.dll`; without consent it only prints the release URL. It never downloads BepInEx or the game.
 
-Tested on 2026-11-10 on Windows 11 with the game and plugin 0.1.3 running: `/health`, `/state`, `/grid`, `/tech`, `/files` and the client. Write endpoints (`/code`, `/run`, `/buy`, `/save`) were **not** called. On 2026-11-11, assisted install was simulated with local same-version release assets: consent / refusal / hash mismatch all behaved as specified.
+Tested on 2026-11-10 on Windows 11 with the game and plugin 0.1.3 running: `/health`, `/state`, `/grid`, `/tech`, `/files` and the client. Write endpoints (`/code`, `/run`, `/buy`, `/save`) were **not** called. On 2026-11-11, assisted install was simulated with local same-version release assets: consent / refusal / hash mismatch all behaved as specified. On the same day, Cursor 3.29.9 was tested end to end: PASS (the skill loaded and read /health and /grid). Claude Code was not tested (no Anthropic account, and no further attempt is planned).
 
 This disclosure does not change the MIT license.
