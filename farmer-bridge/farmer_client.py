@@ -55,6 +55,8 @@ def main():
     sub.add_parser("step")
     sub.add_parser("save")
     sub.add_parser("load")
+    p = sub.add_parser("start")
+    p.add_argument("--save", default="")
 
     p = sub.add_parser("grid")
     p.add_argument("--x", type=int, default=0)
@@ -105,6 +107,8 @@ def main():
         result = api("/save", "POST", {})
     elif args.cmd == "load":
         result = api("/load", "POST", {})
+    elif args.cmd == "start":
+        result = api("/start", "POST", {"save": args.save})
     elif args.cmd == "files":
         result = api("/files")
     elif args.cmd == "file":
