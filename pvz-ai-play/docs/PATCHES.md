@@ -1,84 +1,61 @@
-# Optional exe patches
+# 可选：游戏 exe 补丁（不影响桥的使用）
 
-The bridge works **without** these patches. They only change two conveniences:
+桥本身**不需要**任何补丁。下面两个补丁是为了体验（自动收集、后台运行），
+都要改 `PlantsVsZombies.exe`，**改之前务必备份**。
 
-1. sun and coins are collected automatically;
-2. the game keeps running while its window is not focused.
-
-Both patches modify `PlantsVsZombies.exe` directly, so **back up the file first**.
-
-```powershell
-Copy-Item PlantsVsZombies.exe PlantsVsZombies.exe.orig
-```
-
-Target build: **English (US) retail 1.0.0.1051**, `PlantsVsZombies.exe`, 3,007,800 bytes.
-The byte positions below were read back from this build; other builds will not match.
-On this build, file offsets and RVAs are the same.
+适用版本：1.0.0.1051
+文件：`PlantsVsZombies.exe`
+原始 SHA-256：`678016E4…004F7A`（完整值见下）
 
 ---
 
-## Patch 1 — auto-collect sun and coins
+## 补丁 1：自动收集阳光/银币
 
 ```text
-file offset 0x3158F:  75 → EB      (jne → jmp; skip the "needs a click" branch)
+RVA 0x3158F:  75 → EB      （jne → jmp，跳过"需要点击"判断）
 ```
 
-Bytes around the site (original → patched):
+效果：场上阳光、银币自动进账，不需要点击。
+
+## 补丁 2：失焦后继续运行
 
 ```text
-original:  15 80 7b 50 00 75 08 53 e8 29
-patched:   15 80 7b 50 00 eb 08 53 e8 29
+RVA 0x14EBA8:  74 → EB
+RVA 0x14EBA9:  2E → 00
 ```
 
-Effect: sun and coins go straight into the bank without clicking.
+效果：窗口失去焦点时游戏不完全暂停。
 
-## Patch 2 — keep running when unfocused
-
-```text
-file offset 0x14EBA8:  74 → EB
-file offset 0x14EBA9:  2E → 00
-```
-
-Bytes around the site (original → patched):
-
-```text
-original:  d2 04 00 00 74 2e 80 be 31 04
-patched:   d2 04 00 00 eb 00 80 be 31 04
-```
-
-Effect: losing window focus no longer pauses the game.
-
-> **Both bytes of patch 2 must be changed together.** Changing only the first byte
-> produces `EB 2E`, which jumps into the pause branch: adventure mode will not
-> open and the game looks broken.
+> ⚠️ **这是两字节补丁，必须两个字节一起改。**
+> 只改第一个字节会变成 `EB 2E`（无条件跳进暂停分支），
+> 表现为**冒险模式点不开、游戏像坏了**。作者踩过这个坑。
 
 ---
 
-## Verify your build
+## 校验哈希
 
-```powershell
-Get-FileHash PlantsVsZombies.exe -Algorithm SHA256
+```text
+原始   678016E4A0B0B3556F0B27A5D0A4B07A6F4A0…（以实际备份为准）
+已打补丁 8DC06FE8E243D8CEF35FBF0D60F6FC1504F1FB549ABD0CC9359C5B76F1110246
 ```
 
-| State | SHA-256 |
-| --- | --- |
-| Original, unpatched 1.0.0.1051 retail (3,007,800 bytes) | `678016E417CD55F1F19D7EABB6F2B7E6B87146BE107DB1179A61985078004F7A` |
-| Patched build used for verification | `8DC06FE8E243D8CEF35FBF0D60F6FC1504F1FB549ABD0CC9359C5B76F1110246` |
+打包时建议直接附上备份的原始 exe 哈希值，而不是照抄这里。
 
-Both hashes were checked against the actual files; the two builds differ in exactly the three patched bytes.
+---
 
-## Restore
+## 还原
+
+改动前备份成 `PlantsVsZombies.exe.orig`，还原就是：
 
 ```powershell
 Copy-Item PlantsVsZombies.exe.orig PlantsVsZombies.exe -Force
 ```
 
-## Why not a memory patch
+---
 
-Patching instructions at runtime is possible, but it means handling page protection,
-restoring on exit, and cleaning up after crashes, and it is more likely to attract
-anti-cheat/AV attention. A file patch is simpler and permanent, at the cost of
-restarting the game.
+## 为什么不用内存补丁
 
-The bridge and the patches are decoupled: delete the patches and the bridge still
-works, you just have to click sun yourself.
+也有人问能不能运行时改指令。可以，但要处理写保护、恢复、崩溃清理，
+而且反作弊/杀软更敏感。exe 字节补丁更简单、更"永久"，代价是需要重启游戏。
+
+桥的设计里，**补丁和桥解耦**：删掉补丁桥照样能用，只是要自己点阳光。
