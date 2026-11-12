@@ -50,3 +50,13 @@
 - v0.1.1 协助安装的**真实 GitHub 下载**（测试用本地同版本 Release 资产模拟；逻辑与实际资产一致）。
 
 调试写接口默认关闭（`FARMERBRIDGE_DEBUG=1` 才开），本技能不使用、不介绍。
+
+## 发布记录
+
+| 渠道 | 状态 | 地址 / 值 |
+| --- | --- | --- |
+| Agensi（免费条目） | **已上架**（2026-11-12 过审） | <https://www.agensi.io/skills/farmer-bridge> |
+| GitHub 技能正本 | 已发布 | <https://github.com/dhd78/skills/tree/main/farmer-bridge> |
+| GitHub 游戏插件镜像 | 已发布 | <https://github.com/dhd78/aigame-plugins/tree/main/farmer-bridge/skill> |
+| 插件 Release | v0.1.4 | <https://github.com/dhd78/aigame-plugins/releases/tag/farmer-bridge-v0.1.4> |
+| Agensi 上传包 | `farmer-bridge-skill-v0.1.1.zip`（19,287 B） | `466ED04C041ACF1E11C661C36C4C2B4AEC2B9B0C85D4BAFB1D88E5A8A19F0971` |
