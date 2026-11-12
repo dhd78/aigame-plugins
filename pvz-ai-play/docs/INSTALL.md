@@ -6,7 +6,8 @@
 | --- | --- |
 | 系统 | **Windows**（桥用了 `ctypes` + Win32 API，不支持 Linux/macOS） |
 | Python | 3.9+（3.10/3.11 实测可用） |
-| 游戏 | 《植物大战僵尸》**1.0.0.1051**（内存偏移针对这版；GOTY 1.2.0.1096 不适用） |
+| 游戏 | 《植物大战僵尸》**1.0.0.1051**（内存偏移针对这版；GOTY 1.2.0.1096 不适用）|
+| 语言 | 测试安装为中文文本包（`properties/LawnStrings.txt`，GBK）；exe 本身是英文 build。内存偏移与文本语言无关 |
 | 依赖 | [`pvztools`](https://pypi.org/project/pvztools/) 0.2.0+ |
 
 ## 一、装依赖
@@ -15,7 +16,7 @@
 pip install pvztools
 ```
 
-如果 pip 报 SSL/OpenSSL 错误，用离线方式：
+如果 pip 报 SSL/OpenSSL 错误（本机遇到过），用离线方式：
 
 ```bash
 # 1) 从 PyPI 下载 wheel
@@ -28,7 +29,7 @@ python -c "import zipfile; zipfile.ZipFile('pvztools-0.2.0-py3-none-any.whl').ex
 
 ```bash
 # 方式 A：环境变量指向 vendor 目录
-set PVZTOOLS_VENDOR=D:\path\to\vendor
+set PVZTOOLS_VENDOR=<path>\vendor
 
 # 方式 B：把解压出来的 pvztools/ 目录整个放到 pvz_server.py 同级（桥会自动找 ./vendor）
 ```
