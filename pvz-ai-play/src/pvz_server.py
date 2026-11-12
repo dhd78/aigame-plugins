@@ -18,6 +18,7 @@ from __future__ import annotations
 import ctypes
 import ctypes.wintypes as wt
 import json
+import struct
 import subprocess
 import sys
 import threading
@@ -36,12 +37,14 @@ if _vendor:
 
 try:
     import pvztools as pvz  # noqa: E402
+
 except ImportError:
     _local = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'vendor')
     sys.path.insert(0, _local)
     import pvztools as pvz  # noqa: E402
 
 _lock = threading.Lock()
+_spin_lock = threading.Lock()
 _game = None
 _game_pid = None
 
@@ -355,11 +358,27 @@ def state_dict() -> Dict[str, Any]:
     coins = []
     try:
         coins = [{'type': int(c.type), 'x': round(float(c.pos[0]), 1),
-                  'y': round(float(c.pos[1]), 1), 'collecting': c.collecting}
+                  'y': round(float(c.pos[1]), 1), 'collecting': c.collecting,
+                  'seed_type': int(getattr(c, 'usable_seed_type', -1) or -1),
+                  'seed_name': plant_name_by_type(int(getattr(c, 'usable_seed_type', -1) or -1))
+                  if int(getattr(c, 'usable_seed_type', -1) or -1) >= 0 else None}
                  for c in g.observer.coins(include_dead=False) if not c.dead]
     except Exception:
         pass
     out['coins'] = coins
+    try:
+        _cha = _u32(_u32(_u32(0x6A9EC0) + 0x768) + 0x160)
+        if _cha:
+            out['challenge'] = {
+                'state': int.from_bytes(_read(_cha + 0x54, 4), 'little', signed=True),
+                'counter': int.from_bytes(_read(_cha + 0x58, 4), 'little', signed=True),
+                'score': int.from_bytes(_read(_cha + 0x60, 4), 'little', signed=True),
+                'sel_flag': _read(_cha + 8, 1)[0],
+                'sel_x': int.from_bytes(_read(_cha + 0xC, 4), 'little', signed=True),
+                'sel_y': int.from_bytes(_read(_cha + 0x10, 4), 'little', signed=True),
+            }
+    except Exception as _e:
+        out['challenge_error'] = repr(_e)
     return out
 
 
@@ -415,7 +434,7 @@ class Handler(BaseHTTPRequestHandler):
                     cands = AWARD_CLICK_CANDIDATES if ui == 5 else MENU_CLICK_CANDIDATES
                     hit = None
                     for (x, y) in cands:
-                        post_click(g, x, y, gap=0.55)
+                        ui_click(g, x, y, gap=0.55)
                         time.sleep(0.35)
                         now = ui_now(g)
                         if now != ui:
@@ -425,6 +444,425 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(200, {'ok': hit is not None, 'ui': ui,
                                                 'clicked': hit,
                                                 'tried': len(cands)})
+                if path == '/spin':
+                    # 老虎机拉杆：远程调用游戏自己的 Board::MouseDown(0x411F20)。
+                    # 游戏内部会走完整点击流程（扣 25 阳光、启动滚轮、状态置 4），
+                    # 不写内存、不注入鼠标，所以不会破坏状态机。
+                    app = _u32(0x6A9EC0)
+                    bd = _u32(app + 0x768)
+                    if not bd:
+                        return self.send_json(503, {'ok': False, 'error': 'not in level'})
+                    mode = int.from_bytes(_read(app + 0x7F8, 4), 'little', signed=True)
+                    if mode != 18:
+                        return self.send_json(409, {'ok': False,
+                                                    'reason': 'not_slot_machine',
+                                                    'game_mode': mode})
+                    bk = _u32(bd + 0x144)
+                    ch = _u32(bd + 0x160)
+                    if not bk or not ch:
+                        return self.send_json(503, {'ok': False, 'error': 'no seed bank'})
+
+                    def rd_i(addr):
+                        return int.from_bytes(_read(addr, 4), 'little', signed=True)
+
+                    # 把手矩形 = (seed_bank+8 + 0x1D9, seed_bank+0xC, 55, 80)
+                    bank_x = rd_i(bk + 8)
+                    bank_y = rd_i(bk + 0xC)
+                    cx = bank_x + 0x1D9 + 27
+                    cy = bank_y + 40
+
+                    sun_before = rd_i(bd + 0x5560)
+                    state_before = rd_i(ch + 0x54)
+                    if state_before != 0:
+                        return self.send_json(409, {'ok': False, 'reason': 'spinning',
+                                                    'state': state_before})
+                    if sun_before < 25:
+                        return self.send_json(409, {'ok': False, 'reason': 'no_sun',
+                                                    'sun': sun_before, 'cost': 25})
+
+                    try:
+                        from pvztools.control.asm import Asm
+                        ex = g.actions.executor
+                        code = Asm()
+                        code.push_imm32(1)        # clickCount
+                        code.push_imm32(cy)       # y
+                        code.push_imm32(cx)       # x
+                        code.mov_reg_imm32('ecx', bd)
+                        code.call_abs(0x411F20)   # Board::MouseDown
+                        ex.run(code, timeout_ms=2000)
+                    except Exception as _e:
+                        return self.send_json(500, {'ok': False, 'error': repr(_e)})
+
+                    # 等这一转结束：状态 4 -> 0
+                    deadline = time.time() + float(body.get('wait', 10))
+                    saw = False
+                    while time.time() < deadline:
+                        st = rd_i(ch + 0x54)
+                        if st == 4:
+                            saw = True
+                        elif st == 0 and saw:
+                            break
+                        time.sleep(0.05)
+
+                    reels = [rd_i(bk + 0x28 + 0x50 * k + 0x34) for k in range(3)]
+                    sun_after = rd_i(bd + 0x5560)
+                    ok = (sun_before - sun_after) >= 25 or saw
+                    return self.send_json(200 if ok else 409, {
+                        'ok': ok, 'saw_spin': saw,
+                        'click': [cx, cy],
+                        'sun_before': sun_before, 'sun': sun_after,
+                        'cost': sun_before - sun_after,
+                        'reels': reels,
+                        'reel_names': [plant_name_by_type(t) for t in reels]})
+
+                if path == '/force_plant':
+                    # 调试：直接 Board::AddPlant 指定类型（不查卡槽、不扣费）
+                    row0 = int(body.get('row', 0))
+                    col0 = int(body.get('col', 0))
+                    ptype = int(body.get('type', 0))
+                    here = raw_plants_at(row0, col0)
+                    if here and not body.get('stack'):
+                        return self.send_json(409, {'ok': False, 'reason': 'occupied',
+                                                    'row': row0, 'col': col0,
+                                                    'plant': here[0]['name']})
+                    try:
+                        idx = plant_remote(g, ptype, row0, col0)
+                    except Exception as _e:
+                        return self.send_json(500, {'ok': False, 'error': repr(_e)})
+                    return self.send_json(200 if idx is not None else 409,
+                                          {'ok': idx is not None, 'row': row0, 'col': col0,
+                                           'type': ptype, 'index': idx})
+
+                if path == '/belt_compact':
+                    # 传送带补位（按游戏规则）：左移 N 格 -> offset += 50*N，index=新槽位
+                    app_ = _u32(0x6A9EC0)
+                    bd = _u32(app_ + 0x768)
+                    bank = _u32(bd + 0x144)
+                    if not bank:
+                        return self.send_json(503, {'ok': False, 'error': 'no seed bank'})
+                    maxs = int(body.get('slots', 10))
+                    base = int.from_bytes(_read(bank + 0x28 + 0x08, 4),
+                                          'little', signed=True)  # 槽0 的基础X
+
+                    def rd_i(addr):
+                        return int.from_bytes(_read(addr, 4), 'little', signed=True)
+
+                    before, cards = [], []
+                    for i in range(maxs):
+                        p = bank + 0x28 + 0x50 * i
+                        t = rd_i(p + 0x34)
+                        before.append(t)
+                        if t >= 0:
+                            cards.append((i, rd_i(p + 0x30), _read(p, 0x50)))
+                    moved = 0
+                    for new_i, (old_i, old_off, blob) in enumerate(cards):
+                        if new_i == old_i:
+                            continue
+                        dst = bank + 0x28 + 0x50 * new_i
+                        _write(dst, blob)
+                        _write(dst + 0x2C, new_i.to_bytes(4, 'little', signed=True))
+                        _write(dst + 0x08, (base + 50 * new_i).to_bytes(4, 'little', signed=True))
+                        shift = old_i - new_i
+                        _write(dst + 0x30, (old_off + 50 * shift).to_bytes(4, 'little', signed=True))
+                        moved += 1
+                    for i in range(len(cards), maxs):
+                        p = bank + 0x28 + 0x50 * i
+                        if rd_i(p + 0x34) >= 0:
+                            _write(p + 0x34, (-1).to_bytes(4, 'little', signed=True))
+                    after = []
+                    for i in range(maxs):
+                        after.append(rd_i(bank + 0x28 + 0x50 * i + 0x34))
+                    return self.send_json(200, {'ok': True, 'moved': moved,
+                                                'before': before, 'after': after})
+
+                if path == '/twist_rotate':
+                    # 宝石迷阵 Twist：调用 0x420280(challenge, x, y) 旋转该格所在的 2x2
+                    app_ = _u32(0x6A9EC0)
+                    bd = _u32(app_ + 0x768)
+                    ch_ = _u32(bd + 0x160)
+                    if not bd or not ch_:
+                        return self.send_json(503, {'ok': False, 'error': 'not in level'})
+                    mode_ = int.from_bytes(_read(app_ + 0x7F8, 4), 'little', signed=True)
+                    row = int(body.get('row', 0))
+                    col = int(body.get('col', 0))
+                    # 点击锚点是 2x2 块的右下角（实测）
+                    # 点击锚点是 2x2 的右上角（实测）
+                    row_click = row
+                    col_click = col + 1
+                    x = int(40 + (col_click + 0.5) * (620.0 / 8))
+                    y = int(80 + (row_click + 0.5) * (480.0 / 5))
+                    sun_before = int.from_bytes(_read(bd + 0x5560, 4), 'little', signed=True)
+                    try:
+                        from pvztools.control.asm import Asm
+                        ex = g.actions.executor
+                        code = Asm()
+                        code.push_imm32(y)
+                        code.push_imm32(x)
+                        code.push_imm32(ch_)
+                        code.call_abs(0x420280)
+                        ex.run(code, timeout_ms=2000)
+                    except Exception as _e:
+                        return self.send_json(500, {'ok': False, 'error': repr(_e)})
+                    time.sleep(float(body.get('wait', 0.6)))
+                    sun_after = int.from_bytes(_read(bd + 0x5560, 4), 'little', signed=True)
+                    return self.send_json(200, {'ok': True, 'row': row, 'col': col,
+                                                'game_mode': mode_, 'click': [x, y],
+                                                'sun_before': sun_before, 'sun': sun_after,
+                                                'sun_gain': sun_after - sun_before})
+
+                if path == '/begh_swap':
+                    # 宝石迷阵交换：写选中状态 + 投递 WM_MOUSEMOVE（不动真实光标）
+                    a = body.get('a')
+                    b = body.get('b')
+                    if not a or not b:
+                        return self.send_json(400, {'ok': False, 'error': 'a/b 需要 [row, col]'})
+                    app_ = _u32(0x6A9EC0)
+                    bd = _u32(app_ + 0x768)
+                    ch_ = _u32(bd + 0x160)
+                    wm_ = _u32(app_ + 0x320)
+                    if not bd or not ch_ or not wm_:
+                        return self.send_json(503, {'ok': False, 'error': 'not in level'})
+                    mode_ = int.from_bytes(_read(app_ + 0x7F8, 4), 'little', signed=True)
+                    if mode_ != 20:
+                        return self.send_json(409, {'ok': False, 'reason': 'not_beghouled',
+                                                    'game_mode': mode_})
+
+                    def cpx(rc):
+                        r_, c_ = int(rc[0]), int(rc[1])
+                        return (int(40 + (c_ + 0.5) * (620.0 / 8)),
+                                int(80 + (r_ + 0.5) * (480.0 / 5)))
+
+                    ax, ay = cpx(a)
+                    bx, by = cpx(b)
+                    sun_before = int.from_bytes(_read(bd + 0x5560, 4), 'little', signed=True)
+                    _write(ch_ + 8, b'\x01')
+                    _write(ch_ + 0xC, int(ax).to_bytes(4, 'little', signed=True))
+                    _write(ch_ + 0x10, int(ay).to_bytes(4, 'little', signed=True))
+                    time.sleep(0.05)
+                    try:
+                        px, py = g.window.logical_to_physical(bx, by)
+                        lparam = (int(py) << 16) | (int(px) & 0xFFFF)
+                        ctypes.windll.user32.PostMessageW(g.window.hwnd, 0x0200, 0, lparam)
+                    except Exception as _e:
+                        return self.send_json(500, {'ok': False, 'error': repr(_e)})
+                    deadline = time.time() + float(body.get('wait', 1.2))
+                    while time.time() < deadline:
+                        time.sleep(0.05)
+                    sun_after = int.from_bytes(_read(bd + 0x5560, 4), 'little', signed=True)
+                    return self.send_json(200, {'ok': True, 'a': a, 'b': b,
+                                                'pixel_a': [ax, ay], 'pixel_b': [bx, by],
+                                                'sun_before': sun_before, 'sun': sun_after,
+                                                'sun_gain': sun_after - sun_before})
+
+                if path == '/vase_plant':
+                    # 破罐者：点地上的植物卡片 -> 点目标格（两步都用 Board::MouseDown）
+                    row = int(body.get('row', 0))
+                    col = int(body.get('col', 0))
+                    app_ = _u32(0x6A9EC0)
+                    bd = _u32(app_ + 0x768)
+                    if not bd:
+                        return self.send_json(503, {'ok': False, 'error': 'not in level'})
+                    cards = []
+                    try:
+                        for c in g.observer.coins(include_dead=False):
+                            if c.dead:
+                                continue
+                            st = int(getattr(c, 'usable_seed_type', -1) or -1)
+                            if int(c.type) == 16 and st >= 0:
+                                cards.append((c, st))
+                    except Exception as _e:
+                        return self.send_json(500, {'ok': False, 'error': repr(_e)})
+                    if not cards:
+                        return self.send_json(409, {'ok': False, 'reason': 'no_card'})
+                    want = body.get('type')
+                    pick = next(((c, st) for c, st in cards if want is None or st == int(want)), None)
+                    if pick is None:
+                        return self.send_json(409, {'ok': False, 'reason': 'type_not_found',
+                                                    'available': [st for _, st in cards]})
+                    coin, st = pick
+                    cx, cy = int(coin.pos[0]), int(coin.pos[1])
+                    scene = board_scene()
+                    step = 85 if scene in (2, 3) else 100
+                    px, py = 80 + 80 * col, 40 + step * row + step // 2
+                    try:
+                        board_mousedown(g, bd, cx, cy)     # 点卡片
+                        time.sleep(0.3)
+                        board_mousedown(g, bd, px, py)     # 点格子
+                        time.sleep(0.4)
+                    except Exception as _e:
+                        return self.send_json(500, {'ok': False, 'error': repr(_e)})
+                    here = raw_plants_at(row, col)
+                    placed = next((p for p in here if int(p['type']) == st), None)
+                    return self.send_json(200 if placed else 409, {
+                        'ok': placed is not None, 'row': row, 'col': col,
+                        'type': st, 'name': plant_name_by_type(st),
+                        'card_click': [cx, cy], 'cell_click': [px, py],
+                        'planted': placed})
+
+                if path == '/break_vase':
+                    # 破罐者：点碎指定格子的罐子
+                    row = int(body.get('row', 0))
+                    col = int(body.get('col', 0))
+                    scene = board_scene()
+                    before = [v for v in (state_dict().get('vases') or [])
+                              if int(v.get('row', -1)) == row and int(v.get('col', -1)) == col]
+                    if not before:
+                        return self.send_json(404, {'ok': False, 'reason': 'no_vase',
+                                                    'row': row, 'col': col})
+                    info = before[0]
+                    step = 85 if scene in (2, 3) else 100
+                    x = 80 + 80 * col
+                    y = 40 + step * row + step // 2
+                    bd = _u32(_u32(0x6A9EC0) + 0x768)
+                    try:
+                        board_mousedown(g, bd, x, y)
+                    except Exception as _e:
+                        return self.send_json(500, {'ok': False, 'error': repr(_e)})
+                    time.sleep(0.5)
+                    after = [v for v in (state_dict().get('vases') or [])
+                             if int(v.get('row', -1)) == row and int(v.get('col', -1)) == col]
+                    return self.send_json(200 if not after else 409, {
+                        'ok': not after, 'row': row, 'col': col, 'click': [x, y],
+                        'content': info.get('vase_kind'), 'detail': info.get('plant') or info.get('zombie')})
+
+                if path == '/next_wave':
+                    # Last Stand「继续猛攻」按钮：屏幕底部中间 (400,570)
+                    s0 = state_dict()
+                    z0 = len(s0.get('zombies') or [])
+                    try:
+                        _bd = _u32(_u32(0x6A9EC0) + 0x768)
+                        board_mousedown(g, _bd, 400, 570)
+                    except Exception as _e:
+                        try:
+                            post_click(g, 400, 570, gap=0.5)
+                        except Exception as _e2:
+                            return self.send_json(500, {'ok': False, 'error': repr(_e2)})
+                    time.sleep(0.6)
+                    s1 = state_dict()
+                    z1 = len(s1.get('zombies') or [])
+                    return self.send_json(200, {'ok': True,
+                                                'zombies_before': z0, 'zombies_after': z1,
+                                                'wave_after': s1.get('wave'),
+                                                'clicked': [400, 570]})
+
+                if path == '/debug_click':
+                    # 调试：远程调用 Board::MouseDown(x,y,1)（走游戏自己的点击流程）
+                    bd = _u32(_u32(0x6A9EC0) + 0x768)
+                    if not bd:
+                        return self.send_json(503, {'ok': False, 'error': 'not in level'})
+                    x = int(body.get('x', 0))
+                    y = int(body.get('y', 0))
+                    try:
+                        from pvztools.control.asm import Asm
+                        ex = g.actions.executor
+                        code = Asm()
+                        code.push_imm32(1)
+                        code.push_imm32(y)
+                        code.push_imm32(x)
+                        code.mov_reg_imm32('ecx', bd)
+                        code.call_abs(0x411F20)
+                        ex.run(code, timeout_ms=2000)
+                    except Exception as _e:
+                        return self.send_json(500, {'ok': False, 'error': repr(_e)})
+                    return self.send_json(200, {'ok': True, 'clicked': [x, y]})
+
+                if path == '/plant_prize':
+                    # 老虎机奖品：点弹出的卡片(硬币) -> 点格子
+                    bd = _u32(_u32(0x6A9EC0) + 0x768)
+                    if not bd:
+                        return self.send_json(503, {'ok': False, 'error': 'not in level'})
+                    app_ = _u32(0x6A9EC0)
+                    mode = int.from_bytes(_read(app_ + 0x7F8, 4), 'little', signed=True)
+                    row0 = int(body.get('row', 0))
+                    col0 = int(body.get('col', 0))
+                    want = body.get('type')
+                    scene = board_scene()
+                    prizes = []
+                    try:
+                        for c in g.observer.coins(include_dead=False):
+                            if c.dead:
+                                continue
+                            st = int(getattr(c, 'usable_seed_type', -1) or -1)
+                            if int(c.type) == 16 and st >= 0:
+                                prizes.append((c, st))
+                    except Exception as _e:
+                        return self.send_json(500, {'ok': False, 'error': repr(_e)})
+                    if not prizes:
+                        return self.send_json(409, {'ok': False, 'reason': 'no_prize'})
+                    if want is not None:
+                        picked = next(((c, st) for c, st in prizes if st == int(want)), None)
+                    else:
+                        picked = prizes[0]
+                    if picked is None:
+                        return self.send_json(409, {'ok': False, 'reason': 'prize_type_not_found',
+                                                    'available': [st for _, st in prizes]})
+                    coin, st = picked
+                    # 水生植物只能种水里（雨关/老虎机都由我们用 AddPlant 落地，需自己把关）
+                    if st in WATER_ONLY_PLANTS and scene in POOL_SCENES and row0 not in WATER_ROWS:
+                        return self.send_json(409, {'ok': False, 'reason': 'water_only',
+                                                    'row': row0, 'col': col0,
+                                                    'plant': plant_name_by_type(st)})
+                    cx, cy = int(coin.pos[0]), int(coin.pos[1])
+                    px, py = cell_pixel(row0, col0, scene)
+                    try:
+                        if mode == 19:
+                            # 雨关：远程点击对种子卡不生效，改为
+                            # AddPlant 种下 + 把这张卡片标记为已销毁（游戏自己也是这么收尾的）
+                            plant_remote(g, st, row0, col0)
+                            time.sleep(0.25)
+                            coin_arr = _u32(bd + 0xE4)
+                            if coin_arr:
+                                _write(coin_arr + 0xD8 * int(coin.index) + 0x38, b'\x01')
+                            time.sleep(0.35)
+                        else:
+                            board_mousedown(g, bd, cx, cy)   # 点卡片
+                            time.sleep(0.35)
+                            board_mousedown(g, bd, px, py)   # 点格子
+                            time.sleep(0.5)
+                    except Exception as _e:
+                        return self.send_json(500, {'ok': False, 'error': repr(_e)})
+                    here = raw_plants_at(row0, col0)
+                    placed = next((p for p in here if int(p['type']) == st), None)
+                    return self.send_json(200 if placed else 409, {
+                        'ok': placed is not None,
+                        'reason': None if placed else 'not_placed',
+                        'row': row0, 'col': col0,
+                        'prize_click': [cx, cy], 'cell_click': [px, py],
+                        'type': st, 'name': plant_name_by_type(st),
+                        'planted': placed})
+
+                if path == '/recalibrate':
+                    # 窗口/全屏变化后重新校准坐标映射
+                    info = {}
+                    try:
+                        g.window.calibrate()
+                        info['calibrated'] = True
+                    except Exception as _e:
+                        info['calibrated'] = False
+                        info['error'] = repr(_e)
+                    for attr in ('client_w', 'client_h', 'scale_x', 'scale_y',
+                                 'origin_x', 'origin_y', 'letterbox_x', 'letterbox_y'):
+                        try:
+                            info[attr] = getattr(g.window, attr)
+                        except Exception:
+                            pass
+                    return self.send_json(200, dict(info, ok=True))
+
+                if path == '/click':
+                    # 通用点击：投递给游戏窗口（不需要前台）
+                    lx = float(body.get('x', 0))
+                    ly = float(body.get('y', 0))
+                    gap = float(body.get('gap', 0.35))
+                    method = str(body.get('method', 'board'))
+                    try:
+                        if method == 'board':
+                            _bd = _u32(_u32(0x6A9EC0) + 0x768)
+                            board_mousedown(g, _bd, int(lx), int(ly))
+                        else:
+                            post_click(g, lx, ly, gap=gap)
+                    except Exception as _e:
+                        return self.send_json(500, {'ok': False, 'error': repr(_e)})
+                    return self.send_json(200, {'ok': True, 'x': lx, 'y': ly})
                 if path == '/pick':
                     # 选卡：先清空卡槽，再逐张点选（真实鼠标）
                     from pvztools.control.chooser import chooser_card_xy, bank_packet_xy
@@ -455,7 +893,7 @@ class Handler(BaseHTTPRequestHandler):
                     for _ in range(size + 2):
                         if chooser_picked_count() <= 0:
                             break
-                        post_click(g, *bank_packet_xy(0, size))
+                        ui_click(g, *bank_packet_xy(0, size))
                     cleared = chooser_picked_count()
                     picked, failed = [], []
                     for name in names[:size]:
@@ -465,7 +903,7 @@ class Handler(BaseHTTPRequestHandler):
                             failed.append(name)
                             continue
                         cnt0 = chooser_picked_count()
-                        post_click(g, *chooser_card_xy(pid, ch.has7rows))
+                        ui_click(g, *chooser_card_xy(pid, ch.has7rows))
                         cnt1 = chooser_picked_count()
                         if cnt1 <= cnt0:                     # 没点上，重试一次
                             post_click(g, *chooser_card_xy(pid, ch.has7rows), gap=0.45)
@@ -482,7 +920,7 @@ class Handler(BaseHTTPRequestHandler):
                     if ch.ui() != 2:
                         return self.send_json(200, {'ok': ch.ui() == 3, 'ui': ch.ui(),
                                                     'already_in_level': ch.ui() == 3})
-                    post_click(g, *LETS_ROCK_XY, gap=0.5)
+                    ui_click(g, *LETS_ROCK_XY, gap=0.5)
                     deadline = time.time() + float(body.get('wait', 12))
                     while time.time() < deadline:
                         try:
@@ -518,18 +956,50 @@ class Handler(BaseHTTPRequestHandler):
                     if is_buster and not blocker:
                         return self.send_json(409, {'ok': False, 'reason': 'buster_needs_grave',
                                                     'row': row0, 'col': col0})
-                    idx = plant_remote(g, int(pkt['type']), row0, col0)
-                    time.sleep(0.15)
-                    got = raw_plants_at(row0, col0)
-                    matched = any(int(p['type']) == int(pkt['type']) for p in got)
-                    # 瞬发植物（樱桃/寒冰菇/毁灭菇/辣椒）放下就爆，查不到也算成功
+                    bd = _u32(_u32(0x6A9EC0) + 0x768)
+                    # 优先走游戏自己的「点卡 -> 点格子」流程：
+                    # 这样用卡、传送带左移补位、滑动动画都由游戏处理（不会卡位）
+                    scene_ = board_scene()
                     instant = int(pkt['type']) in INSTANT_PLANTS
-                    ok = idx is not None and (matched or instant)
-                    if ok:
-                        consume_belt_packet(pkt['slot'])
+                    ok = False
+                    idx = None
+                    try:
+                        slot_ = int(pkt['slot'])
+                        _bank = _u32(bd + 0x144)
+                        _pk = _bank + 0x28 + 0x50 * slot_
+                        _base = int.from_bytes(_read(_pk + 0x08, 4), 'little', signed=True)
+                        _off = int.from_bytes(_read(_pk + 0x30, 4), 'little', signed=True)
+                        _click_x = _base + _off + 39   # 卡片中心（绘制X + 19..59）
+                        board_mousedown(g, bd, _click_x, 40)           # 点传送带卡片
+                        time.sleep(0.25)
+                        px, py = cell_pixel(row0, col0, scene_)
+                        board_mousedown(g, bd, px, py)                 # 点格子
+                        time.sleep(0.35)
+                        got = raw_plants_at(row0, col0)
+                        matched = any(int(p['type']) == int(pkt['type']) for p in got)
+                        if instant:
+                            # 瞬发植物：看卡片是否被消耗
+                            after = read_belt()
+                            ok = not any(b['slot'] == slot_ and b['type'] == int(pkt['type'])
+                                         for b in after)
+                        else:
+                            ok = matched
+                        if ok:
+                            compact_belt()      # 种下瞬间立刻补位（防止新卡穿过去填坑）
+                    except Exception as _e:
+                        sys.stderr.write('conveyor ui plant failed: %r\n' % (_e,))
+                    if not ok:
+                        # 兜底：直接 AddPlant + 清槽
+                        idx = plant_remote(g, int(pkt['type']), row0, col0)
+                        time.sleep(0.15)
+                        got = raw_plants_at(row0, col0)
+                        matched = any(int(p['type']) == int(pkt['type']) for p in got)
+                        ok = idx is not None and (matched or instant)
+                        if ok:
+                            consume_belt_packet(pkt['slot'])
                     return self.send_json(200 if ok else 409, {
                         'ok': ok, 'conveyor': True, 'row': row0, 'col': col0,
-                        'placed': next((p['name'] for p in got if str(p['type']) == str(seed['type'])), (got[0]['name'] if got else None)), 'index': idx,
+                        'placed': next((p['name'] for p in got if str(p['type']) == str(pkt['type'])), (got[0]['name'] if got else None)), 'index': idx,
                         'from_belt_slot': pkt['slot'], 'belt_left': len(read_belt())})
                 if path == '/plant':
                     row0 = int(body.get('row', 0))
@@ -571,6 +1041,12 @@ class Handler(BaseHTTPRequestHandler):
                     # 统一用表：游戏 cd_total 可能是旧值/0，导致两边时间不一致
                     cd_ms = PLANT_CD_MS.get(int(seed['type']), 7500)
                     charged = PLANT_COST.get(int(seed['type']), 0)
+                    # 老虎机模式：赢来的植物是奖品，免费种，并且种完要消耗掉那张卡
+                    _app = _u32(0x6A9EC0)
+                    _slot_mode = int.from_bytes(_read(_app + 0x7F8, 4),
+                                                'little', signed=True) == 18
+                    if _slot_mode:
+                        charged = 0
                     idx = plant_remote(g, int(seed['type']), row0, col0)
                     # 种下就立刻记账 + 写回冷却，不要等校验（否则玩家能看到延迟）
                     if idx is not None:
@@ -759,6 +1235,48 @@ def read_belt() -> List[Dict[str, Any]]:
     except Exception:
         pass
     return out
+
+
+def compact_belt(slots: int = 10) -> Dict[str, Any]:
+    """按游戏规则补位：左移 N 格 -> offset += 50*N，index = 新槽位。
+
+    飞行中的卡：index 减 N、offset 加 50*N，绘制 X 不变（不会穿过别的卡）。
+    已到位的卡：offset 从 0 变 50*N，产生左移动画。
+    """
+    app = _u32(0x6A9EC0)
+    board = _u32(app + 0x768)
+    bank = _u32(board + 0x144)
+    if not bank:
+        return {'ok': False, 'error': 'no seed bank'}
+    base = int.from_bytes(_read(bank + 0x28 + 0x08, 4), 'little', signed=True)
+
+    def rd_i(addr: int) -> int:
+        return int.from_bytes(_read(addr, 4), 'little', signed=True)
+
+    before, cards = [], []
+    for i in range(slots):
+        p = bank + 0x28 + 0x50 * i
+        t = rd_i(p + 0x34)
+        before.append(t)
+        if t >= 0:
+            cards.append((i, rd_i(p + 0x30), _read(p, 0x50)))
+    moved = 0
+    for new_i, (old_i, old_off, blob) in enumerate(cards):
+        if new_i == old_i:
+            continue
+        dst = bank + 0x28 + 0x50 * new_i
+        _write(dst, blob)
+        _write(dst + 0x2C, new_i.to_bytes(4, 'little', signed=True))
+        _write(dst + 0x08, (base + 50 * new_i).to_bytes(4, 'little', signed=True))
+        shift = old_i - new_i
+        _write(dst + 0x30, (old_off + 50 * shift).to_bytes(4, 'little', signed=True))
+        moved += 1
+    for i in range(len(cards), slots):
+        p = bank + 0x28 + 0x50 * i
+        if rd_i(p + 0x34) >= 0:
+            _write(p + 0x34, (-1).to_bytes(4, 'little', signed=True))
+    return {'ok': True, 'moved': moved, 'before': before,
+            'after': [rd_i(bank + 0x28 + 0x50 * i + 0x34) for i in range(slots)]}
 
 
 def consume_belt_packet(slot: int) -> bool:
@@ -973,6 +1491,7 @@ ZOMBIE_NAME_BY_TYPE = {
     25: '僵王博士', 26: '豌豆僵尸', 27: '坚果僵尸', 28: '辣椒僵尸', 29: '机枪僵尸',
     30: '窝瓜僵尸', 31: '高坚果僵尸', 32: '红眼巨人'}
 VASE_ITEM_TYPE = 7
+LEVER_XY = (660, 200)   # 老虎机把手（逻辑坐标 800x600，实测命中）
 BLOCKING_GRID_ITEMS = frozenset({1, 2, 3, 7})   # 墓碑/弹坑/梯子/罐子 都不能种；钉耙不影响
 
 
@@ -982,6 +1501,60 @@ PLANT_INIT_STATE_COUNTDOWN = {9: 12000}   # 阳光菇：小形态持续 120 秒�
 
 
 PLANT_INIT_STATE = {9: 23}   # 阳光菇：小形态
+
+
+def ui_click(g: Any, x: float, y: float, gap: float = 0.35) -> str:
+    """界面点击：优先直接调 WidgetManager::MouseDown，失败再投递。返回使用的方式。"""
+    try:
+        widget_mousedown(g, int(x), int(y))
+        time.sleep(gap)
+        return 'widget'
+    except Exception:
+        post_click(g, x, y, gap=gap)
+        return 'post'
+
+
+def widget_mousedown(g: Any, x: int, y: int, button: int = 1) -> Any:
+    """直接调 WidgetManager::MouseDown(0x539390)：传逻辑坐标，不依赖窗口模式。"""
+    from pvztools.control.asm import Asm
+    app = _u32(0x6A9EC0)
+    wm = _u32(app + 0x320)
+    if not wm:
+        raise RuntimeError('no widget manager')
+    ex = g.actions.executor
+    code = Asm()
+    code.push_imm32(int(button))
+    code.mov_reg_imm32('eax', int(x))
+    code.mov_reg_imm32('edi', int(y))
+    # MouseDown(this=ECX=wm, x=EAX, y=stack? ) —— 实测签名: ecx=wm, eax=x, push y, ebx=button
+    code2 = Asm()
+    code2.push_imm32(int(y))
+    code2.mov_reg_imm32('eax', int(x))
+    code2.mov_reg_imm32('ebx', int(button))
+    code2.mov_reg_imm32('ecx', wm)
+    code2.call_abs(0x539390)
+    return ex.run(code2, timeout_ms=2000)
+
+
+def board_mousedown(g: Any, board: int, x: int, y: int, click_count: int = 1) -> Any:
+    """远程调用 Board::MouseDown(0x411F20)：走游戏自己的点击流程。"""
+    from pvztools.control.asm import Asm
+    ex = g.actions.executor
+    code = Asm()
+    code.push_imm32(int(click_count))
+    code.push_imm32(int(y))
+    code.push_imm32(int(x))
+    code.mov_reg_imm32('ecx', int(board))
+    code.call_abs(0x411F20)
+    return ex.run(code, timeout_ms=2000)
+
+
+def cell_pixel(row: int, col: int, scene: int) -> tuple:
+    """格子中心像素（与游戏一致：日/夜/屋顶行高 100，池塘/浓雾 85）。"""
+    x = 80 + 80 * int(col)
+    step = 85 if int(scene) in (2, 3) else 100
+    y = 40 + step * int(row) + (step // 2)
+    return x, y
 
 
 def plant_remote(g: Any, ptype: int, row: int, col: int) -> Any:
@@ -1067,7 +1640,7 @@ def read_grid_items() -> List[Dict[str, Any]]:
                 continue
             col = int.from_bytes(blob[b + 0x10:b + 0x14], 'little', signed=True)
             row = int.from_bytes(blob[b + 0x14:b + 0x18], 'little', signed=True)
-            if not (0 <= row <= 4 and 0 <= col <= 8):
+            if not (0 <= row <= 5 and 0 <= col <= 12):   # 传送门可能出现在第 9 列
                 continue
             rec = {'row': row, 'col': col, 'type': t,
                    'name': GRID_ITEM_NAMES.get(t, 'type:%d' % t),
