@@ -1,6 +1,6 @@
-# Design notes
+# DESIGN NOTES
 
-实现原理、内存布局和踩过的坑。
+这份文档记录桥的实现原理、内存布局和踩过的坑。
 
 ---
 
@@ -25,6 +25,21 @@
 
 实测结论：`PostMessage(WM_MOUSEMOVE + 按下/松开)` 对这版游戏**有效**；
 早前误判为无效，是因为用错了验证信号（见第 5 节）。
+
+---
+
+## 1.5 游戏版本与语言（重要）
+
+| 部分 | 实际 |
+| --- | --- |
+| `PlantsVsZombies.exe` | 英文零售版 1.0.0.1051（版本资源 `English (United States)`，exe 内无中文字符串） |
+| 游戏安装 | 可带本地化文本包：`properties/LawnStrings.txt`（本测试安装为 **GBK 中文**） |
+| 内存偏移 | 只取决于 exe，与文本语言无关 |
+
+也就是说：**exe 是英文 build，游戏界面可以是中文**（文本在外部文件里）。
+桥的接口名称（中文植物名/僵尸名）是桥自己那一层的映射，不依赖游戏资源。
+
+命名差异一例：荷叶(16) 游戏内叫「睡莲」，pvztools 里叫「荷叶」，桥两者都认。
 
 ---
 
@@ -144,7 +159,7 @@ mov dword [eax+0x3C], 23
 4. **底座叠加时校验失败**：用 pvztools 的植物列表校验新植物，在花盆/荷叶上会读不到刚种的那株。
    改用直读 `board+0xAC` 数组（`raw_plants_at`）后解决。
 
-5. **两字节补丁必须两个字节一起改**：`74 2E → EB 00` 只改首字节会变成 `EB 2E`
+5. **两字节补丁必须整改**：`74 2E → EB 00` 只改首字节会变成 `EB 2E`
    （无条件跳进暂停分支），表现为"冒险模式点不开"。
 
 6. **性能**：每次请求都跑 `tasklist` 查进程要 ~1.5 秒。
@@ -165,3 +180,96 @@ mov dword [eax+0x3C], 23
 - 选卡+开局：清空 → 选满 → 点开始 → `ui 2→3`
 - 特殊关卡：传送带（消耗/补货）、池塘（荷叶）、屋顶（花盆）、冰面、墓碑吞噬者、气球僵尸
 - 未验证：通关结算自动衔接、小游戏/解谜完整玩法、小时级长跑
+
+---
+
+# v2026-11-12 架构与实现（新版）
+
+## 1. 总体分层
+
+```text
+客户端 ──HTTP/JSON──> pvz_server.py
+                       ├── ① HTTP 层   ThreadingHTTPServer + Handler
+                       ├── ② 状态层    state_dict() 组装快照
+                       ├── ③ 动作层    plant / click / 各模式端点
+                       ├── ④ 校验层    placement_check（水/陆/屋顶/冰/墓碑）
+                       └── ⑤ 经济层    PLANT_COST + 冷却账本 + 写回游戏
+                    依赖：
+                       ├── 自研 ctypes 内存层（Read/WriteProcessMemory、直接读结构）
+                       └── pvztools（attach、观测器、远程调用执行器、少量常量）
+```
+
+核心原则：**能远程调用游戏自己的函数，就绝不改中间状态字段。**
+
+## 2. 三种"点"的实现
+
+| 方式 | 实现 | 用途 | 全屏可用 |
+| --- | --- | --- | --- |
+| 棋盘点击 | `Board::MouseDown(0x411F20)`（this=ECX=board，push y，push x，push 1） | 棋盘内一切 | 是 |
+| 界面点击 | `WidgetManager::MouseDown(0x539390)`（this=ECX=wm，eax=x，push y，ebx=1） | 选卡界面、按钮 | 是 |
+| 投递消息 | `WM_MOUSEMOVE/WM_LBUTTON*` | 旧方案、`/begh_swap` | **否** |
+
+`ui_click` 先试界面点击，失败回退投递（兼容两种窗口模式）。
+
+## 3. 关键结构偏移（1.0.0.1051）
+
+```text
+app        = [0x6A9EC0]      game_mode=[app+0x7F8]  ui=[app+0x7FC]  wm=[app+0x320]
+board      = [app+0x768]     scene=[board+0x554C]   sun=[board+0x5560]
+challenge  = [board+0x160]   （+0x54 state, +0x58 counter, +0x60 score, +0x08 sel_flag）
+plants     = [board+0xAC]    cap=[board+0xB0]   stride 0x14C
+grid_items = [board+0x11C]   cap=[board+0x120]  stride 0xEC
+coins      = [board+0xE4]    cap=[board+0xE8]   stride 0xD8
+seed_bank  = [board+0x144]   packets=+0x28 stride 0x50   conveyor_counter=+0x34C
+```
+
+植物对象字段：`row +0x1C`、`type +0x24`、`col +0x28`、`state +0x3C`、`hp +0x40`、`state_countdown +0x54`。
+种子包字段：`cd_elapsed +0x24`、`cd_total +0x28`、`index +0x2C`、`offset_x +0x30`、`type +0x34`、`usable +0x48`。
+
+## 4. 种植的两条路线
+
+### 4.1 普通关：远程 `Board::AddPlant`
+
+```text
+push -1 (imitater) / push type / eax=row / push col / ebp=board / push ebp / call AddPlant
+```
+
+`AddPlant` 会把 `state_countdown` 置 1，下一帧即"长大"；
+需要的植物（阳光菇等）必须在**同一次远程调用内**写好 `+0x54` 与 `+0x3C`，
+否则会出现"逻辑小形态、模型大形态且动画停止"。
+
+### 4.2 传送带关：UI 路径
+
+```text
+点卡：board_mousedown(packet_base_x + off_x + 39, 40)
+点格：board_mousedown(格子中心)
+种下瞬间 compact_belt()：后卡前移，offset += 50 * N
+```
+
+游戏本身的补位是延迟触发的，且会把"新飞来的卡"重新瞄准空位（看起来像穿卡），
+所以桥在种下瞬间自己做一次补位。
+
+## 5. 各模式入口
+
+| 模式 | game_mode | 关键入口 |
+| --- | --- | --- |
+| 老虎机 | 18 | `Board::MouseDown(510,40)` 拉杆；奖品是 `coin.type==16` |
+| 雨关 | 19 | 卡片 = coin；`AddPlant` 落地后销毁 coin |
+| 宝石迷阵 | 20 | 写 `challenge+8/+0xC/+0x10` + 投递 `WM_MOUSEMOVE` |
+| 宝石迷阵 Twist | 24 | `0x420280(challenge, x, y)`，锚点 = 2×2 的右上角 |
+| 谁笑到最后 | 31 | 点 `(400,570)`「继续猛攻」 |
+| 保护传送门 | 26 | 传送门 = grid_item type 4/5（注意第 9 列也要读） |
+| 破罐者 | 51 | 罐子 = grid_item type 7；点格子破罐、点卡片+点格子种植物 |
+
+## 6. 经济记账
+
+`AddPlant` 不扣阳光、不进冷却，桥代替记账并写回：
+
+- 阳光：`board+0x5560`
+- 冷却：`packet+0x24=0`、`+0x28=cd_cs`、`+0x48=0`、`+0x49=1`
+
+## 7. 兼容性注意
+
+- 投递消息在**全屏模式失效**（游戏读真实光标），因此已把主要交互改为直接调用
+- `/begh_swap` 仍依赖投递，是全屏下的已知限制
+- 桥同时只支持一个游戏实例（pvztools 进程锁）
