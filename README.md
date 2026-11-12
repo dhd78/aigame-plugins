@@ -6,7 +6,7 @@ Bridges and tools that let AI agents read and act inside single-player games. Ea
 
 | Directory | Game | What it does |
 | --- | --- | --- |
-| [`pvz-ai-play`](pvz-ai-play/) | Plants vs. Zombies (PvZ1) 1.0.0.1051 | Local HTTP bridge: reads the board, plants/shovels, picks seeds and starts a level. No vision, no OCR, no mouse control |
+| [`pvz-ai-play`](pvz-ai-play/) | Plants vs. Zombies (PvZ1) 1.0.0.1051 | Local HTTP bridge: reads the board, plants/shovels, picks seeds, starts levels and drives the minigames (Slot Machine, Beghouled, Vasebreaker, Last Stand, Portal Combat); windowed and fullscreen. No vision, no OCR |
 | [`千恋万花读取文本插件`](千恋万花读取文本插件/) | Senren * Banka | Read-only text bridge: injects into the x86 game process, reads the current KAG history line, exposes it on `127.0.0.1:15528` |
 | [`farmer-bridge`](farmer-bridge/) | The Farmer Was Replaced | BepInEx plugin + skill: exposes farm state and code execution over a loopback HTTP JSON API (`127.0.0.1:15800`), ships a stdlib-only Python client, and includes a `SKILL.md` wrapper under `skill/` for Claude Code / Cursor / Codex (canonical skill copy: [skills repo](https://github.com/dhd78/skills/tree/main/farmer-bridge); also listed on [Agensi](https://www.agensi.io/skills/farmer-bridge), free) |
 
