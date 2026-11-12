@@ -22,7 +22,7 @@ POST /start →  选卡界面开始
 ## 1. 启动桥
 
 ```bash
-# 需要 Python 3.9+ 和 pvztools（见 docs/INSTALL.md）
+# 需要 Python 3.9+ 和 pvztools（见 INSTALL.md）
 python pvz_server.py 15580
 ```
 
@@ -121,7 +121,7 @@ loop forever:
 | `water_only` | 水生植物被种到陆地 | 换到水面格子 |
 | `buster_needs_grave` | 墓碑吞噬者只能种墓碑上 | 找 `grid_items` 里 `type==1` 的格子 |
 | `not_on_belt` | 传送带关：带上没这张卡 | 从 `belt` 里挑现有的 |
-| `not_foreground` | 旧版才返回；当前版本不会出现 | 忽略即可 |
+| `not_foreground` | （旧版）需要前台 | 新版不会出现 |
 
 **规则**：收到 409 不要原样重试；按 reason 换策略。
 
@@ -141,6 +141,7 @@ loop forever:
 - 水面格子 = `water`（第 2、3 行）
 - 水面上种陆生植物 → 必须先有荷叶（`lily`）
 - 荷叶/缠绕水草/海蘑菇/香蒲只能种水里
+- 荷叶（type 16）游戏内叫「睡莲」，pvztools 里叫「荷叶」，桥两者都认
 
 ### 5.3 屋顶（`scene: 4`）
 
@@ -152,7 +153,10 @@ loop forever:
 
 - 罐子内容可读：`vases: [{"row":3,"col":6,"vase_kind":"zombie","zombie":"铁桶僵尸"}]`
 - 罐子算作 `blocked` 格子
-- 目前桥没有"敲罐子"接口，只能读
+- **敲罐子**：`POST /break_vase {"row":3,"col":6}`
+- **种罐子里的植物**：打碎后地上会出现卡片，用 `POST /vase_plant {"row":4,"col":0}` 种到指定格
+  （可选 `"type": 5` 指定拿哪张卡；不传就取第一张）
+- 罐子内容可提前看 → 可以规划"先敲哪个"
 
 ### 5.5 空中僵尸
 
@@ -244,4 +248,63 @@ while True:
 | `/plant` 一直 `cooldown` | 桥重启会清空本地冷却表，可能偏保守 |
 | 卡片一直不可用 + `paused: true` | 游戏失焦会暂停，冷却不推进 |
 | 传送带 `/plant` 404 | 从 `belt` 里挑，别写死卡名 |
-| 种植返回 409 但植物出现了 | 以 `/state.plants` 为准；连续不一致就重启桥 |
+| 种植返回 409 但植物出现了 | 已修复的旧 bug；若复现请读 `raw_plants_at` 逻辑 |
+
+---
+
+## 10. 小游戏模式（v2026-11-12 新增）
+
+> 判断当前是哪种模式：`/state` 里没有直接的 `game_mode` 字段，
+> 可用特征字段间接判断（`vases` 非空 = 破罐者，`belt` 非空 = 传送带类，`challenge.score` 变化 = 宝石迷阵系）。
+
+### 10.1 宝石迷阵（Beghouled, mode 20）
+
+- 5×8 网格，plant 就是"宝石"，靠交换相邻两格凑三连
+- `POST /begh_swap {"row1":2,"col1":3,"row2":2,"col2":4}`
+- ⚠️ 该接口仍用投递消息，全屏模式下可能失效
+
+### 10.2 宝石迷阵 Twist（mode 24）
+
+- 操作是**顺时针旋转 2×2 四格**：左上→右上→右下→左下→左上
+- `POST /twist_rotate {"row":2,"col":3}`（row/col 是该 2×2 的**左上角**）
+- 无效旋转（消不掉三连）游戏会自动转回去 → 调用后读 `/state` 确认真的变了
+- 求解思路：对每个 2×2 模拟顺时针旋转，只挑"旋转后四个格子参与新三连"的块；
+  连续两次无效就把该块拉黑换地方（避免死循环）
+- 通关目标：`challenge.score` 达到 75
+
+### 10.3 破罐者（Vasebreaker, mode 51）
+
+- `vases[]` 提前给出每个罐子的内容（`vase_kind` = plant/zombie，附名字）
+- 敲罐：`POST /break_vase {"row":R,"col":C}`
+- 种罐子植物：`POST /vase_plant {"row":R,"col":C,"type":可选}`
+  - 内部流程：点地上卡片（`Board::MouseDown`）→ 点目标格
+  - 两步都必须用 `Board::MouseDown`，投递点击只能"收卡"、种不下去
+
+### 10.4 谁笑到最后（Last Stand, mode 31）
+
+- 清完一波后点屏幕底部中间的「继续猛攻」提前拉下一波（拿额外阳光奖励）
+- `POST /next_wave`（内部点 `(400,570)`）
+
+### 10.5 老虎机（mode 18）
+
+- `POST /spin` 远程点拉杆
+- 奖品是弹出卡片：`/state.coins` 里 `type==16 && seed_type>=0`，用 `POST /plant_prize {"row":R,"col":C}` 种下
+- 三张卷轴图案只是动画，真正的奖品是那个 coin
+
+### 10.6 雨关（It's Raining Seeds, mode 19）
+
+- 卡片从天上掉，`/state.coins` 里能读到；`POST /plant_prize` 种下
+- 水生植物只能种水里（桥会校验 `water_only`）
+
+### 10.7 传送带（坚果保龄球等）
+
+- `/plant` 自动走"点卡 → 点格子"的 UI 路径，种下瞬间补位
+- 保龄球类关卡：球会滚出去，撞到僵尸后斜向弹开（属正常行为）
+- 只能放前几列由关卡规则决定，放错桥会返回 409
+
+### 10.8 我是僵尸（I, Zombie）
+
+- 阳光是"脑子币"，卡槽里是僵尸卡（type 60/63/67 …）
+- 放僵尸：`/debug_click` 点卡（第 i 张中心 `(117+60*i, 42)`）→ 再点目标格
+- 目标：吃光最左列 `grid_items` 里 `type==12` 的脑子
+- 已验证可放置（普通僵尸花 50）
