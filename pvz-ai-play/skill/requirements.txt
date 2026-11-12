@@ -1,0 +1,3 @@
+# 运行时依赖
+# 游戏版本：Plants vs. Zombies 1.0.0.1051（Windows）
+pvztools>=0.2.0
